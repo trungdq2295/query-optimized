@@ -12,6 +12,7 @@
 //	QOPT_ADDR         listen address             (default :8080)
 //	QOPT_CORS_ORIGIN  CORS allow-origin          (default *)
 //	QOPT_TIMEOUT      per-query timeout seconds  (default 60)
+//	QOPT_STATIC_DIR   serve built frontend here  (default none; API-only)
 package main
 
 import (
@@ -33,6 +34,7 @@ func main() {
 	dsn := os.Getenv("QOPT_DSN")
 	addr := env("QOPT_ADDR", ":8080")
 	origin := env("QOPT_CORS_ORIGIN", "*")
+	staticDir := os.Getenv("QOPT_STATIC_DIR")
 	timeoutS := envInt("QOPT_TIMEOUT", 60)
 
 	if dsn == "" {
@@ -55,8 +57,8 @@ func main() {
 		log.Fatalf("build use case: %v", err)
 	}
 
-	srv := httphandler.New(uc, engine, mode, origin, timeoutS)
-	log.Printf("qopt-server listening on %s (mode=%s engine=%s)", addr, mode, engine)
+	srv := httphandler.New(uc, engine, mode, origin, staticDir, timeoutS)
+	log.Printf("qopt-server listening on %s (mode=%s engine=%s static=%q)", addr, mode, engine, staticDir)
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		log.Fatal(err)
 	}

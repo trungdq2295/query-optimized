@@ -1,6 +1,7 @@
 # Secrets / local env — never commit
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 credentials*
@@ -8,6 +9,10 @@ credentials*
 # Go build output
 /backend/qopt
 /backend/qopt-server
+# launcher/Docker build the binaries at the repo root
+/qopt
+/qopt-server
+/qopt-seed
 *.out
 
 # Frontend

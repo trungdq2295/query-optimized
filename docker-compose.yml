@@ -1,0 +1,57 @@
+# One-command HOSTED stack (case 3): a MySQL demo database, a one-shot seeder,
+# and the optimizer server holding the API key. Anyone can then open the page
+# in a browser and optimize — no AI tools, no credentials on their side.
+#
+#   QOPT_API_KEY=sk-ant-... docker compose up --build
+#   → open http://localhost:8080
+#
+# The server runs in 'hosted' mode: it calls the Anthropic API with the key
+# below (server secret) and points at the fixed 'demo' MySQL database.
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root      # throwaway demo password — not a secret
+      MYSQL_DATABASE: demo
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - dbdata:/var/lib/mysql
+
+  # Runs once: loads the demo schema + 300k rows, then exits.
+  seed:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      QOPT_ENGINE: mysql
+      QOPT_DSN: "root:root@tcp(db:3306)/demo?parseTime=true"
+    entrypoint: ["/app/qopt-seed", "-engine", "mysql",
+                 "-dsn", "root:root@tcp(db:3306)/demo?parseTime=true",
+                 "-file", "/app/examples/seed-mysql.sql"]
+    restart: "no"
+
+  server:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      QOPT_MODE: hosted
+      QOPT_ENGINE: mysql
+      QOPT_DSN: "root:root@tcp(db:3306)/demo?parseTime=true"
+      QOPT_API_KEY: "${QOPT_API_KEY:?set QOPT_API_KEY in your shell or a .env file}"
+      QOPT_API_MODEL: "${QOPT_API_MODEL:-claude-sonnet-4-6}"
+      QOPT_STATIC_DIR: /app/web
+      QOPT_ADDR: ":8080"
+
+volumes:
+  dbdata:

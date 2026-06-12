@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/trudoan/query-optimizer/internal/domain"
 	"github.com/trudoan/query-optimizer/internal/usecase/optimize"
@@ -24,17 +26,20 @@ import (
 // Server wires the optimize use case to HTTP. engine + the DSN behind uc are
 // fixed at construction; the mode string is reported for diagnostics only.
 type Server struct {
-	uc       *optimize.UseCase
-	engine   string
-	mode     string // "hosted" | "local" — informational
-	timeoutS int
-	origin   string // CORS allow-origin
+	uc        *optimize.UseCase
+	engine    string
+	mode      string // "hosted" | "local" — informational
+	timeoutS  int
+	origin    string // CORS allow-origin
+	staticDir string // optional: serve the built frontend from here
 }
 
 // New builds the server. origin is the CORS Access-Control-Allow-Origin value
-// (e.g. the frontend dev URL, or "*").
-func New(uc *optimize.UseCase, engine, mode, origin string, timeoutS int) *Server {
-	return &Server{uc: uc, engine: engine, mode: mode, timeoutS: timeoutS, origin: origin}
+// (e.g. the frontend dev URL, or "*"). staticDir, if non-empty, makes this one
+// process also serve the built frontend (SPA) — so a packaged local app or a
+// hosted deploy needs no separate web server.
+func New(uc *optimize.UseCase, engine, mode, origin, staticDir string, timeoutS int) *Server {
+	return &Server{uc: uc, engine: engine, mode: mode, timeoutS: timeoutS, origin: origin, staticDir: staticDir}
 }
 
 // Handler returns the router with CORS applied.
@@ -44,7 +49,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/optimize", s.handleOptimize)
 	mux.HandleFunc("/recheck", s.handleRecheck)
 	mux.HandleFunc("/explain", s.handleExplain)
+	if s.staticDir != "" {
+		// Catch-all: anything not matched above is a frontend asset (or the SPA
+		// index for client-side routes). API routes win because they are exact.
+		mux.HandleFunc("/", s.serveStatic)
+	}
 	return s.cors(mux)
+}
+
+// serveStatic serves a file from staticDir, falling back to index.html so the
+// single-page app loads on any path. http.ServeFile rejects ".." traversal.
+func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	clean := filepath.Clean(r.URL.Path)
+	path := filepath.Join(s.staticDir, clean)
+	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+		path = filepath.Join(s.staticDir, "index.html")
+	}
+	http.ServeFile(w, r, path)
 }
 
 // cors adds permissive-but-scoped CORS headers and answers preflight requests.
