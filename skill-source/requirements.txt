@@ -1,6 +1,0 @@
-SQLAlchemy>=2.0
-# install the driver for your engine:
-#   Postgres : psycopg2-binary
-#   MySQL    : PyMySQL
-#   MSSQL    : pyodbc   (+ Microsoft ODBC Driver 18)
-#   SQLite   : built-in

@@ -1,0 +1,43 @@
+-- Demo queries for the seeded dataset (examples/seed-sqlite.sql /
+-- examples/seed-mysql.sql). These exercise the two outcomes the tool supports.
+--
+-- ============================================================================
+-- CASE 1 — self-serve REWRITE (the tool proves this automatically)
+-- ============================================================================
+-- Slow: a correlated subquery re-scans the 300k-row orders table once per US
+-- customer. No DDL fixes this — the query shape is the problem.
+--
+--   SELECT c.id, c.name,
+--          (SELECT COUNT(*) FROM orders o
+--             WHERE o.customer_id = c.id AND o.status = 'shipped') AS shipped
+--   FROM customers c
+--   WHERE c.country = 'US';
+--
+-- Faster rewrite (returns the IDENTICAL rows — a LEFT JOIN keeps customers with
+-- zero shipped orders, matching the subquery's 0 count). The verifier runs both
+-- and confirms same rows + better timing:
+--
+--   SELECT c.id, c.name, COUNT(o.id) AS shipped
+--   FROM customers c
+--   LEFT JOIN orders o
+--     ON o.customer_id = c.id AND o.status = 'shipped'
+--   WHERE c.country = 'US'
+--   GROUP BY c.id, c.name;
+--
+-- ============================================================================
+-- CASE 2 — escalated INDEX (the tool does NOT predict; it captures a baseline,
+--          an engineer applies the DDL, then `qopt`/Recheck proves the effect)
+-- ============================================================================
+-- Slow: point-lookup by the UNINDEXED orders.customer_id → full 300k scan.
+--
+--   SELECT * FROM orders
+--   WHERE customer_id = 4242
+--   ORDER BY created_at DESC
+--   LIMIT 10;
+--
+-- The proposal an engineer applies (NEVER run by the tool):
+--
+--   CREATE INDEX idx_orders_customer ON orders (customer_id);
+--
+-- After it exists, re-run the SAME query against the baseline → measured
+-- before/after, no prediction.

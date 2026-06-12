@@ -1,0 +1,24 @@
+# Secrets / local env — never commit
+.env
+.env.*
+*.pem
+*.key
+credentials*
+
+# Go build output
+/backend/qopt
+/backend/qopt-server
+*.out
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+
+# Local demo databases
+*.db
+*.sqlite
+
+# OS / editor
+.DS_Store

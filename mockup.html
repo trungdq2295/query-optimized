@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>qopt — SQL Query Optimizer (mockup)</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1c2430; --muted:#6b7685;
+    --line:#e4e8ee; --accent:#2f6df6; --accent-weak:#eaf1ff;
+    --ok:#1a9b5b; --ok-weak:#e6f6ee; --bad:#d6453d; --bad-weak:#fdeceb;
+    --warn:#b7791f; --warn-weak:#fdf3e0; --grey:#7a8595; --grey-weak:#eef1f5;
+    --code-bg:#f3f5f8; --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px;margin:0 auto;padding:28px 20px 80px}
+
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+  .brand{display:flex;align-items:center;gap:10px}
+  .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);
+    color:#fff;display:grid;place-items:center;font-weight:700;font-family:var(--mono)}
+  .brand h1{font-size:17px;margin:0;font-weight:650}
+  .brand p{margin:0;font-size:12px;color:var(--muted)}
+  .modepill{font-size:12px;color:var(--muted);background:var(--panel);
+    border:1px solid var(--line);border-radius:20px;padding:5px 12px}
+  .modepill b{color:var(--ink)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:16px;margin-bottom:16px}
+  .row{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  label{font-size:12px;color:var(--muted);font-weight:600}
+  select,input[type=text]{font-family:var(--sans);font-size:13px;padding:7px 10px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+  input[type=text]{flex:1;min-width:180px}
+  .hint{font-size:11px;color:var(--muted)}
+
+  textarea{width:100%;min-height:130px;resize:vertical;font-family:var(--mono);
+    font-size:13px;line-height:1.55;padding:12px;border:1px solid var(--line);
+    border-radius:8px;background:var(--code-bg);color:var(--ink)}
+  textarea:focus,select:focus,input:focus{outline:none;border-color:var(--accent);
+    box-shadow:0 0 0 3px var(--accent-weak)}
+
+  .actions{display:flex;justify-content:flex-end;margin-top:12px}
+  button{font-family:var(--sans);font-size:14px;font-weight:600;cursor:pointer;
+    border:none;border-radius:8px;padding:10px 20px;background:var(--accent);color:#fff;
+    display:inline-flex;align-items:center;gap:8px;transition:.15s}
+  button:hover{background:#2459d8}
+  button:disabled{opacity:.55;cursor:default}
+
+  /* live steps */
+  #steps{display:none;gap:18px;align-items:center;font-size:13px;color:var(--muted);
+    border-top:1px dashed var(--line);margin-top:14px;padding-top:14px}
+  #steps.on{display:flex}
+  .step{display:flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--line)}
+  .step.run .dot{background:var(--accent);animation:pulse 1s infinite}
+  .step.done .dot{background:var(--ok)}
+  .step.done{color:var(--ink)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* results */
+  #results{display:none}
+  #results.on{display:block;animation:fade .3s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .sec-h{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:14px;font-weight:650}
+  .sec-h .ic{font-size:15px}
+  ul.why{margin:0;padding-left:18px}
+  ul.why li{margin-bottom:4px}
+  ul.why code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:12px}
+
+  .badge{font-size:11px;font-weight:700;letter-spacing:.04em;padding:4px 10px;border-radius:20px}
+  .badge.ok{background:var(--ok-weak);color:var(--ok)}
+  .badge.bad{background:var(--bad-weak);color:var(--bad)}
+  .badge.warn{background:var(--warn-weak);color:var(--warn)}
+  .badge.grey{background:var(--grey-weak);color:var(--grey)}
+
+  pre.sql{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;margin:0}
+  pre.sql .kw{color:#a13a8f;font-weight:600}
+  pre.sql .fn{color:#2459d8}
+  pre.sql .str{color:#1a9b5b}
+
+  .metrics{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .metric{flex:1;min-width:120px;background:var(--code-bg);border:1px solid var(--line);
+    border-radius:8px;padding:10px 12px}
+  .metric .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .metric .v{font-size:18px;font-weight:700;margin-top:2px}
+  .metric .v.big{color:var(--ok)}
+
+  .advice{font-size:11px;color:var(--muted);margin-top:8px}
+  .copy{font-size:11px;color:var(--accent);cursor:pointer;float:right;font-weight:600}
+  footer{text-align:center;color:var(--muted);font-size:11px;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="logo">q</div>
+      <div>
+        <h1>qopt</h1>
+        <p>connect · diagnose · verify — prove a SQL rewrite is faster <i>and</i> safe</p>
+      </div>
+    </div>
+    <div class="modepill">mode: <b>hosted</b></div>
+  </header>
+
+  <!-- INPUT -->
+  <div class="card">
+    <div class="row">
+      <label>Engine</label>
+      <select id="engine">
+        <option>mysql</option><option>postgres</option><option>sqlite</option>
+      </select>
+      <span class="hint">hosted mode runs against the shared demo database — no connection string needed</span>
+    </div>
+
+    <textarea id="sql">SELECT c.id, c.name,
+       (SELECT COUNT(*) FROM orders o
+        WHERE o.cust_id = c.id AND o.status = 'open') AS open_cnt
+FROM customers c
+WHERE c.region = 'us'
+ORDER BY c.id;</textarea>
+
+    <div class="actions">
+      <button id="go" onclick="run()"><span id="gotext">Optimize ▶</span></button>
+    </div>
+
+    <div id="steps">
+      <div class="step" id="s1"><span class="dot"></span>Diagnosing (EXPLAIN)</div>
+      <div class="step" id="s2"><span class="dot"></span>Proposing <span class="hint">· claude</span></div>
+      <div class="step" id="s3"><span class="dot"></span>Verifying (run old vs new)</div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div id="results">
+
+    <div class="card">
+      <div class="sec-h"><span class="ic">🔎</span>Why it's slow</div>
+      <ul class="why">
+        <li>Correlated subquery runs <b>once per customer row</b> — N separate executions.</li>
+        <li>EXPLAIN shows a <code>full table scan</code> on <code>orders</code> (303k rows, no index on <code>cust_id</code>).</li>
+        <li>Rule <b>C6</b>: correlated subquery → set-based join.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="sec-h">
+        <span class="ic">✏️</span>Rewritten query
+        <span class="badge ok" style="margin-left:auto">✓ VERIFIED</span>
+      </div>
+      <span class="copy">copy</span>
+<pre class="sql"><span class="kw">SELECT</span> c.id, c.name, <span class="fn">COUNT</span>(o.id) <span class="kw">AS</span> open_cnt
+<span class="kw">FROM</span> customers c
+<span class="kw">LEFT JOIN</span> orders o
+  <span class="kw">ON</span> o.cust_id = c.id <span class="kw">AND</span> o.status = <span class="str">'open'</span>
+<span class="kw">WHERE</span> c.region = <span class="str">'us'</span>
+<span class="kw">GROUP BY</span> c.id, c.name
+<span class="kw">ORDER BY</span> c.id;</pre>
+
+      <div class="metrics">
+        <div class="metric"><div class="k">Old</div><div class="v">2.41 s</div></div>
+        <div class="metric"><div class="k">New</div><div class="v">0.005 s</div></div>
+        <div class="metric"><div class="k">Speedup</div><div class="v big">503×</div></div>
+        <div class="metric"><div class="k">Rows</div><div class="v">match ✓</div></div>
+      </div>
+      <div class="advice">behavior-preserving: row count + sample hash identical (<code>e51b91f1…</code>). Safe to use.</div>
+    </div>
+
+    <div class="card">
+      <div class="sec-h">
+        <span class="ic">⚡</span>Index recommendation
+        <span class="badge warn" style="margin-left:auto" id="ixbadge">→ NEEDS ENGINEER</span>
+      </div>
+      <span class="copy">copy</span>
+<pre class="sql"><span class="kw">CREATE INDEX</span> ix_orders_cust_status <span class="kw">ON</span> orders (cust_id, status);</pre>
+      <div class="advice">ESR order: equality (<code>cust_id</code>, <code>status</code>) first.
+        qopt <b>never changes your schema</b> — hand this DDL to your DBA / engineer to apply.</div>
+
+      <div id="ixbaseline" class="advice" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px">
+        Baseline captured now — original query EXPLAIN cost <b>30171</b>.
+        After the engineer applies the index, come back and verify the real effect:
+      </div>
+      <div class="actions" style="justify-content:flex-start;margin-top:8px" id="ixaction">
+        <button style="background:#fff;color:var(--accent);border:1px solid var(--accent)"
+          onclick="verifyIndex()">Verify after applied</button>
+      </div>
+
+      <div id="ixresult" style="display:none;margin-top:10px">
+        <div class="metrics">
+          <div class="metric"><div class="k">Cost before</div><div class="v">30171</div></div>
+          <div class="metric"><div class="k">Cost after</div><div class="v">7</div></div>
+          <div class="metric"><div class="k">Plan</div><div class="v big">index seek</div></div>
+        </div>
+        <div class="advice">Re-ran EXPLAIN against the live schema — index is in use, scan eliminated. Confirmed.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>static mockup · fake data · no backend wired · light mode</footer>
+</div>
+
+<script>
+function run(){
+  const btn=document.getElementById('go'), txt=document.getElementById('gotext');
+  const steps=document.getElementById('steps'), res=document.getElementById('results');
+  btn.disabled=true; txt.textContent='Working…';
+  res.classList.remove('on');
+  steps.classList.add('on');
+  const S=['s1','s2','s3'].map(id=>document.getElementById(id));
+  S.forEach(s=>s.className='step');
+  let i=0;
+  function tick(){
+    if(i>0) S[i-1].className='step done';
+    if(i<S.length){ S[i].className='step run'; i++; setTimeout(tick, 900); }
+    else { res.classList.add('on'); btn.disabled=false; txt.textContent='Optimize ▶';
+           res.scrollIntoView({behavior:'smooth',block:'start'}); }
+  }
+  tick();
+}
+document.querySelectorAll('.copy').forEach(c=>c.onclick=()=>{c.textContent='copied ✓';setTimeout(()=>c.textContent='copy',1200)});
+function verifyIndex(){
+  document.getElementById('ixaction').style.display='none';
+  document.getElementById('ixbaseline').style.display='none';
+  const b=document.getElementById('ixbadge'); b.className='badge ok'; b.textContent='✓ CONFIRMED';
+  document.getElementById('ixresult').style.display='block';
+}
+</script>
+</body>
+</html>
