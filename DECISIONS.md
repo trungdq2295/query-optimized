@@ -101,9 +101,9 @@ needed, it belongs **inside the relevant `Optimizer`** (e.g. a
 
 ---
 
-## ADR-0008 — No code retry loop yet
+## ADR-0008 — No code retry loop yet — **SUPERSEDED by ADR-0011**
 
-**Decision:** there is no `generate → verify → retry` loop in the binary.
+**Decision (original):** there is no `generate → verify → retry` loop in the binary.
 
 **Why:** `v2-migration` needed one because it drove a *headless* `cursor-agent`
 subprocess that couldn't self-correct. Here the AI is the agent in the loop
@@ -111,6 +111,10 @@ subprocess that couldn't self-correct. Here the AI is the agent in the loop
 necessary when an **unattended** frontend ships (Slack bot, embedded agent) —
 build it then, in that adapter, not in the core. Writing it now would be dead
 code that couples the core to a frontend that doesn't exist.
+
+**Update:** the unattended frontend shipped (the web UI, ADR-0012), which is
+exactly the trigger this ADR named. The loop now lives in `usecase/optimize`
+(`maxAttempts = 3`). See ADR-0011.
 
 ---
 
@@ -145,3 +149,116 @@ convention so extension is safe and familiar. Concrete payoffs:
 **Consequence:** more files than a flat layout, but each has one job and the
 seams are physical (package boundaries), not just conventional. The interfaces
 that were informal in the flat version are now `internal/port`.
+
+---
+
+## ADR-0011 — Autonomous propose→verify→re-propose loop in the use case
+
+**Decision:** `usecase/optimize` runs the full loop itself — diagnose, ask the
+`Proposer`, verify, and on a *retryable* failure feed the failed `Verdict` back
+and re-propose, up to `maxAttempts = 3`. Only a `rewrite` is retried.
+
+**Why:** this supersedes ADR-0008. That ADR said "build the loop when an
+unattended frontend ships" — the web UI (ADR-0012) is that frontend; a browser
+user is not an agent who can read a `Verdict` and re-submit. The CLI `verify`
+path is unchanged (still one-shot, JSON in/out) — the loop is additive, on the
+`Optimize` entry point only.
+
+**Consequence:** the core now depends on a `Proposer` port to close the loop.
+It stays *optional* (`New(..., proposer, baselines)` accepts nil) so the CLI
+`verify` path wires neither and is unaffected.
+
+---
+
+## ADR-0012 — HTTP adapter with SSE; `Optimize` + `Recheck` join `Explain`/`Verify`
+
+**Decision:** add `handler/http` next to `handler/cli`, both thin adapters over
+the same use case. `/optimize` streams progress as **Server-Sent Events** then a
+terminal result; `/recheck` and `/explain` are plain JSON. The server holds the
+engine + DSN; request bodies carry only SQL.
+
+**Why:** the browser needs live feedback during a multi-second propose→verify
+loop — SSE gives per-stage progress over one HTTP response (POST + a fetch
+stream reader on the frontend, since `EventSource` is GET-only). Keeping the DSN
+server-side is what makes a public hosted instance safe (ADR-0013/credentials
+never cross the wire).
+
+**Consequence:** the use case grew `Optimize` (loop, ADR-0011) and `Recheck`
+(prove an applied system change vs a captured baseline) alongside the original
+`Explain`/`Verify`. Both adapters call identical use-case methods.
+
+---
+
+## ADR-0013 — One binary, three run modes; the Proposer is a pluggable seam
+
+**Decision:** a single `qopt-server` serves all modes via `QOPT_MODE`:
+- `local` — drives the *user's own* CLI agent (`claude`/`cursor-agent`) headless
+  via a `cli` proposer. No API key; piggybacks the user's existing login.
+- `hosted` — an `api` proposer calls the Anthropic API with a key the **server**
+  holds. The public side needs no AI tools and no credentials.
+- `verify` — no proposer; CLI-style verify only.
+`Proposer` is a `port` interface with `cli`/`api` implementations; `deps` picks
+one from the mode.
+
+**Why:** three personas (engineer with a CLI, analyst with an agent but no
+terminal, and a no-AI browser user) need the same engine but different proposal
+sources. Making the proposer a seam means a new source (e.g. a local model) is
+one new implementation, not a fork.
+
+**Consequence:** the API key is read from env in the `api` proposer only, never
+logged or returned in errors. The DSN is always a server secret.
+
+---
+
+## ADR-0014 — The server can serve the built frontend (`QOPT_STATIC_DIR`)
+
+**Decision:** if `QOPT_STATIC_DIR` is set, the server serves the built SPA as a
+catch-all, falling back to `index.html` for client-side routes; API routes win
+because they are registered as exact paths.
+
+**Why:** a packaged local app (analyst persona) and a hosted deploy should be
+*one* process, not "run a web server too." `http.ServeFile` already rejects
+`..` traversal, so no separate static host is needed.
+
+---
+
+## ADR-0015 — Demo data loads via a Go seeder, not a `sqlite3`/`mysql` client
+
+**Decision:** `cmd/qopt-seed` reads a `.sql` file and executes it through the
+already-imported Go drivers. Seed files have no `;` inside string literals, so
+it strips comment lines then splits on `;`.
+
+**Why:** a fresh clone must run with *only* the Go toolchain — requiring a
+`sqlite3` or `mysql` client binary breaks the "clone and run" promise for the
+analyst and Docker personas. Keeps the demo dependency-free.
+
+---
+
+## ADR-0016 — Package for three personas (launcher + Docker), not one entry point
+
+**Decision:** ship `run-local.sh` / `run-local.command` (build FE+BE, seed
+SQLite, open the browser in local mode) **and** a multi-stage `Dockerfile` +
+`docker-compose.yml` (MySQL + seed + server in hosted mode), on top of the raw
+CLI.
+
+**Why:** the three personas differ in what they have, not in what the engine
+does. One launcher file for the non-CLI analyst; one `docker compose up` for a
+deployer; the bare `go build` for the engineer. Same binary underneath.
+
+---
+
+## ADR-0017 — Prove correctness by end-to-end runs, not unit tests
+
+**Decision:** new code (proposers, HTTP, baseline store, seeder) ships **without
+unit tests**; correctness is shown by real runs against a real database. Existing
+tests (`safety`, `verification`, `usecase`, `deps` integration) stay green but
+are not expanded.
+
+**Why:** the owner's stated preference — mocked tests can pass while the real
+DB/agent path breaks; the value is in the measured before/after, which is the
+product's whole premise ("verify hard"). Investing in mocks for the I/O-bound
+adapters would test the mocks, not the behavior.
+
+**Consequence:** `go test ./...` is still the offline gate, but the source of
+truth for new features is a documented live run (see STATE.md proofs). Don't add
+mock-heavy tests for adapters; verify them end-to-end instead.
