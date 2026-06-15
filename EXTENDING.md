@@ -5,14 +5,18 @@ what works**. Each extension touches one package + the composition root
 (`internal/deps`). The dependency rule guarantees a change in an outer layer
 cannot ripple inward.
 
+> Paths are under `backend/` (e.g. `backend/cmd/qopt`, `backend/internal/...`).
+
 ## The seam guarantee
 
-| You want to add… | You write… | Inner layers edited? | Tests still pass? |
-|---|---|---|---|
-| a new engine (e.g. Oracle) | an adapter in `repo/database/engine.go` + driver import in `cmd/qopt` + row in `deps` | no | yes |
-| a new optimization kind (e.g. `clustering`) | a `Verifier` in `service/verification` + register in `verification.New` | no | yes |
-| a looser verdict (`<1%` tolerance) | a new `Verifier` (or swap the rewrite one) | no | yes |
-| a new frontend (Slack / web) | a sibling of `handler/cli` + a `deps` entry | no | yes |
+| You want to add… | You write… | Inner layers edited? |
+|---|---|---|
+| a new engine (e.g. Oracle) | an adapter in `repo/database/engine.go` + driver import in `cmd/*` + row in `deps` | no |
+| a new optimization kind (e.g. `clustering`) | a `Verifier` in `service/verification` + register in `verification.New` | no |
+| a looser verdict (`<1%` tolerance) | a new `Verifier` (or swap the rewrite one) | no |
+| a new proposer (e.g. a local model) | a `port.Proposer` impl in `service/propose/*` + a `deps.BuildProposer` case | no |
+| a new run mode | a `Mode` const + a `deps.BuildProposer` branch | no |
+| a new frontend (Slack / bot) | a sibling of `handler/{cli,http}` + a `deps` entry | no |
 
 If an "extension" forces you to edit `domain` or `port`, stop — you're probably
 breaking a seam. Adding a constant to `domain` is fine; changing an interface or
@@ -33,7 +37,8 @@ an entity shape touches every implementer at once.
    ```
    Register in `init()`: `register(oracleAdapter{})`.
 
-2. **Driver** — `cmd/qopt/main.go`: `import _ "github.com/godror/godror"`.
+2. **Driver** — blank-import in each entry that needs it (`cmd/qopt`,
+   `cmd/qopt-server`, `cmd/qopt-seed`): `import _ "github.com/godror/godror"`.
 
 3. **Wiring** — `internal/deps/deps.go`, add to `engineToDriver`:
    `"oracle": "godror",`
@@ -86,27 +91,54 @@ behavior := diff < 0.01
 
 ---
 
-## Add a new frontend (Slack / web / autonomous agent)
+## Add a proposer (e.g. a local model, a different API)
 
-`handler/cli` is one delivery adapter. A new one:
-- builds a `domain.Proposal` (from a Slack message / HTTP body / LLM call),
+The AI half is a seam — `port.Proposer` (`Name()` + `Propose(ctx, ProposeInput)`).
+`service/propose` already ships `cli` (drives the user's claude/cursor) and
+`api` (server-held key). To add a third:
+
+1. **Impl** — new package under `service/propose/`. Reuse the shared
+   `propose.BuildPrompt` / `propose.ParseProposal` so the prompt + parsing match
+   the others; only the transport differs.
+2. **Wire** — add a branch in `deps.BuildProposer(mode)` returning your impl.
+
+The use-case loop (ADR-0011) and both handlers call `Proposer` through the
+interface — they never learn which one is wired.
+
+## Add a run mode
+
+Modes select a proposer. Add one:
+
+1. **Const** — a `Mode` value in `deps` (alongside `ModeLocal`/`ModeHosted`/`ModeVerify`).
+2. **Branch** — handle it in `deps.BuildProposer(mode)` (pick/skip a proposer).
+
+`cmd/qopt-server` passes `QOPT_MODE` straight through; nothing else changes.
+
+## Add a new frontend (Slack / bot / autonomous agent)
+
+`handler/cli` and `handler/http` are delivery adapters. A new one:
 - gets a `*optimize.UseCase` from `deps.BuildUseCase`,
-- calls `uc.Verify(...)` / `uc.Explain(...)`, renders the `domain.Verdict`.
+- calls `uc.Optimize(...)` (propose→verify→retry, with a progress callback) or
+  the lower-level `uc.Verify(...)` / `uc.Explain(...)` / `uc.Recheck(...)`,
+- renders the `domain.OptimizeResult` / `domain.Verdict`.
 
-It reuses every inner layer unchanged. **If the frontend is autonomous** (no
-human, no agent-in-the-loop), that adapter is where the `generate → verify →
-retry ≤3` loop goes — feed a failed `Verdict` back to the proposer for a new
-`Proposal`. Not in the core (ADR-0008).
+It reuses every inner layer unchanged. The `generate → verify → retry ≤3` loop
+already lives in the core (`usecase.Optimize`, ADR-0011) — a new autonomous
+frontend just calls it; it does **not** re-implement the loop.
 
 ---
 
 ## Testing an extension
 
-- Service / usecase logic: inject a fake `port.QueryRunner` (see
-  `service/verification/verification_test.go` and
-  `usecase/optimize/optimize_test.go`). No DB.
-- Full wiring: add a case to `internal/deps/deps_integration_test.go` — it runs
-  end-to-end on pure-Go SQLite, offline.
+Correctness is shown by **real end-to-end runs**, not mock-heavy unit tests
+(ADR-0017). Verify a new feature against a real DB (and a real agent/API for a
+proposer), and record the run.
+
+- The existing offline suite must still pass: `service/verification` and
+  `usecase/optimize` inject a fake `port.QueryRunner` (no DB); `deps`
+  integration runs the full wiring on pure-Go SQLite. Run `go test ./...`.
+- Don't add mock-heavy tests for I/O adapters (proposers, HTTP, baseline) —
+  prove them with a documented live run instead.
 
 ---
 
